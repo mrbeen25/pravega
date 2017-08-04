@@ -11,6 +11,7 @@ package io.pravega.segmentstore.server.logs;
 
 import com.google.common.util.concurrent.Service;
 import io.pravega.common.ExceptionHelpers;
+import io.pravega.common.ObjectClosedException;
 import io.pravega.common.concurrent.FutureHelpers;
 import io.pravega.segmentstore.server.ServiceListeners;
 import io.pravega.common.util.ArrayView;
@@ -445,7 +446,8 @@ public class DurableLogTests extends OperationLogTestBase {
         AssertExtensions.assertThrows(
                 "No operations failed.",
                 OperationWithCompletion.allOf(completionFutures)::join,
-                ex -> ex instanceof DataCorruptionException);
+                ex -> ex instanceof DataCorruptionException
+                        || ex instanceof ObjectClosedException);
 
         // Wait for the service to fail (and make sure it failed).
         AssertExtensions.assertThrows(

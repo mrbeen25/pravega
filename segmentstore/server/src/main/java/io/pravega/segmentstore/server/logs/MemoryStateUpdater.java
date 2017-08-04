@@ -9,21 +9,27 @@
  */
 package io.pravega.segmentstore.server.logs;
 
+import com.google.common.base.Preconditions;
 import io.pravega.common.ExceptionHelpers;
 import io.pravega.common.util.SequencedItemList;
 import io.pravega.segmentstore.server.ContainerMetadata;
 import io.pravega.segmentstore.server.DataCorruptionException;
 import io.pravega.segmentstore.server.ReadIndex;
 import io.pravega.segmentstore.server.logs.operations.CachedStreamSegmentAppendOperation;
+import io.pravega.segmentstore.server.logs.operations.MergeTransactionOperation;
 import io.pravega.segmentstore.server.logs.operations.Operation;
 import io.pravega.segmentstore.server.logs.operations.StorageOperation;
 import io.pravega.segmentstore.server.logs.operations.StreamSegmentAppendOperation;
-import io.pravega.segmentstore.server.logs.operations.MergeTransactionOperation;
-import com.google.common.base.Preconditions;
-
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 import javax.annotation.concurrent.GuardedBy;
+import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
+import lombok.RequiredArgsConstructor;
 
 /**
  * Helper class that allows appending Log Operations to available InMemory Structures.
@@ -35,8 +41,10 @@ class MemoryStateUpdater {
     private final ReadIndex readIndex;
     private final SequencedItemList<Operation> inMemoryOperationLog;
     private final Runnable flushCallback;
-    @GuardedBy("readIndex")
-    private HashSet<Long> recentStreamSegmentIds;
+    @GuardedBy("transactions")
+    private final ArrayDeque<Transaction> transactions;
+    private final AtomicBoolean recoveryMode;
+    private final Supplier<Long> nextTransactionId = new AtomicLong(0)::incrementAndGet;
 
     //endregion
 
@@ -66,7 +74,8 @@ class MemoryStateUpdater {
         this.inMemoryOperationLog = inMemoryOperationLog;
         this.readIndex = readIndex;
         this.flushCallback = flushCallback;
-        this.recentStreamSegmentIds = new HashSet<>();
+        this.transactions = new ArrayDeque<>();
+        this.recoveryMode = new AtomicBoolean();
     }
 
     //endregion
@@ -80,6 +89,7 @@ class MemoryStateUpdater {
      */
     void enterRecoveryMode(ContainerMetadata recoveryMetadataSource) {
         this.readIndex.enterRecoveryMode(recoveryMetadataSource);
+        this.recoveryMode.set(true);
     }
 
     /**
@@ -90,25 +100,61 @@ class MemoryStateUpdater {
      */
     void exitRecoveryMode(boolean successfulRecovery) throws DataCorruptionException {
         this.readIndex.exitRecoveryMode(successfulRecovery);
+        this.recoveryMode.set(false);
+    }
+
+    Transaction beginTransaction() {
+        Preconditions.checkState(!this.recoveryMode.get(), "MemoryStateUpdater.Transactions are only applicable in non-recovery mode.");
+        Transaction result = new Transaction(this.nextTransactionId.get(), this);
+        synchronized (this.transactions) {
+            this.transactions.addLast(result);
+        }
+
+        return result;
+    }
+
+    private void commitTransaction(Transaction txn) throws DataCorruptionException {
+        HashSet<Long> segmentIds = new HashSet<>();
+        synchronized (this.transactions) {
+            Preconditions.checkArgument(!this.transactions.isEmpty()
+                            && txn.id >= this.transactions.peekFirst().id
+                            && txn.id <= this.transactions.peekLast().id,
+                    "Given transaction has already been committed.");
+            while (!this.transactions.isEmpty() && this.transactions.peekFirst().id <= txn.id) {
+                Transaction toProcess = this.transactions.removeFirst();
+                for (Operation operation : toProcess.operations) {
+                    long segmentId = process(operation);
+                    if (segmentId >= 0) {
+                        segmentIds.add(segmentId);
+                    }
+                }
+            }
+        }
+
+        this.readIndex.triggerFutureReads(segmentIds);
+        if (this.flushCallback != null) {
+            this.flushCallback.run();
+        }
     }
 
     /**
-     * Appends the given operation.
+     * Processes the given operation and applies it to the ReadIndex and InMemory OperationLog.
      *
-     * @param operation The operation to append.
+     * @param operation The operation to process.
      * @throws DataCorruptionException If a serious, non-recoverable, data corruption was detected, such as trying to
      *                                 append operations out of order.
      */
-    void process(Operation operation) throws DataCorruptionException {
+    long process(Operation operation) throws DataCorruptionException {
+        long segmentId = -1;
         if (!operation.canSerialize()) {
             // Nothing to do.
-            return;
+            return segmentId;
         }
 
         // Add entry to MemoryTransactionLog and ReadIndex/Cache. This callback is invoked from the QueueProcessor,
         // which always acks items in order of Sequence Number - so the entries should be ordered (but always check).
         if (operation instanceof StorageOperation) {
-            addToReadIndex((StorageOperation) operation);
+            segmentId = addToReadIndex((StorageOperation) operation);
             if (operation instanceof StreamSegmentAppendOperation) {
                 // Transform a StreamSegmentAppendOperation into its corresponding Cached version.
                 try {
@@ -131,23 +177,8 @@ class MemoryStateUpdater {
             // while serving reads, so better stop now than later.
             throw new DataCorruptionException("About to have added a Log Operation to InMemoryOperationLog that was out of order.");
         }
-    }
 
-    /**
-     * Flushes recently appended items, if needed.
-     * For example, it may trigger Future Reads on the ReadIndex, if the readIndex supports that.
-     */
-    void flush() {
-        HashSet<Long> elements;
-        synchronized (this.readIndex) {
-            elements = this.recentStreamSegmentIds;
-            this.recentStreamSegmentIds = new HashSet<>();
-        }
-
-        this.readIndex.triggerFutureReads(elements);
-        if (this.flushCallback != null) {
-            this.flushCallback.run();
-        }
+        return segmentId;
     }
 
     /**
@@ -155,7 +186,7 @@ class MemoryStateUpdater {
      *
      * @param operation The operation to register.
      */
-    private void addToReadIndex(StorageOperation operation) {
+    private long addToReadIndex(StorageOperation operation) {
         if (operation instanceof StreamSegmentAppendOperation) {
             // Record a StreamSegmentAppendOperation. Just in case, we also support this type of operation, but we need to
             // log a warning indicating so. This means we do not optimize memory properly, and we end up storing data
@@ -178,10 +209,24 @@ class MemoryStateUpdater {
         // Record recent activity on stream segment, if applicable.
         // We should record this for any kind of StorageOperation. When we issue 'triggerFutureReads' on the readIndex,
         // it should include 'sealed' StreamSegments too - any Future Reads waiting on that Offset will be cancelled.
-        synchronized (this.readIndex) {
-            this.recentStreamSegmentIds.add(operation.getStreamSegmentId());
-        }
+        return operation.getStreamSegmentId();
     }
 
     //endregion
+
+    @NotThreadSafe
+    @RequiredArgsConstructor
+    static class Transaction {
+        private final long id;
+        private final MemoryStateUpdater updater;
+        private final ArrayList<Operation> operations = new ArrayList<>();
+
+        void add(Operation operation) {
+            this.operations.add(operation);
+        }
+
+        void commit() throws DataCorruptionException {
+            this.updater.commitTransaction(this);
+        }
+    }
 }

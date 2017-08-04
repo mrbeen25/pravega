@@ -36,6 +36,7 @@ import java.util.HashSet;
 import java.util.Iterator;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import lombok.val;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
@@ -60,12 +61,21 @@ public class MemoryStateUpdaterTests {
         SequencedItemList<Operation> opLog = new SequencedItemList<>();
         ArrayList<TestReadIndex.MethodInvocation> methodInvocations = new ArrayList<>();
         TestReadIndex readIndex = new TestReadIndex(methodInvocations::add);
-        MemoryStateUpdater updater = new MemoryStateUpdater(opLog, readIndex);
-        ArrayList<Operation> operations = populate(updater, segmentCount, operationCountPerType);
+        AtomicInteger flushCallbackCallCount = new AtomicInteger();
+        MemoryStateUpdater updater = new MemoryStateUpdater(opLog, readIndex, flushCallbackCallCount::incrementAndGet);
+        val txn = updater.beginTransaction();
+        ArrayList<Operation> operations = populate(txn, segmentCount, operationCountPerType);
 
         // Verify they were properly processed.
-        Assert.assertEquals("Unexpected number of items added to ReadIndex.", operations.size() - segmentCount * operationCountPerType, methodInvocations.size());
+        txn.commit();
+        int triggerFutureCount = (int) methodInvocations.stream().filter(mi -> mi.methodName.equals(TestReadIndex.TRIGGER_FUTURE_READS)).count();
+        int addCount = methodInvocations.size() - triggerFutureCount;
+        Assert.assertEquals("Unexpected number of items added to ReadIndex.",
+                operations.size() - segmentCount * operationCountPerType, addCount);
+        Assert.assertEquals("Unexpected number of calls to the ReadIndex triggerFutureReads method.", 1, triggerFutureCount);
+        Assert.assertEquals("Unexpected number of calls to the flushCallback provided in the constructor.", 1, flushCallbackCallCount.get());
 
+        // Verify add calls.
         Iterator<Operation> logIterator = opLog.read(-1, operations.size());
         int currentIndex = -1;
         int currentReadIndex = -1;
@@ -92,6 +102,22 @@ public class MemoryStateUpdaterTests {
                 }
             }
         }
+
+        // Verify triggerFutureReads args.
+        @SuppressWarnings("unchecked")
+        Collection<Long> triggerSegmentIds = (Collection<Long>) methodInvocations
+                .stream()
+                .filter(mi -> mi.methodName.equals(TestReadIndex.TRIGGER_FUTURE_READS))
+                .findFirst().get()
+                .args.get("streamSegmentIds");
+        HashSet<Long> expectedSegmentIds = new HashSet<>();
+        for (Operation op : operations) {
+            if (op instanceof StorageOperation) {
+                expectedSegmentIds.add(((StorageOperation) op).getStreamSegmentId());
+            }
+        }
+
+        AssertExtensions.assertContainsSameElements("ReadIndex.triggerFutureReads() was called with the wrong set of StreamSegmentIds.", expectedSegmentIds, triggerSegmentIds);
 
         // Test DataCorruptionException.
         AssertExtensions.assertThrows(
@@ -125,41 +151,7 @@ public class MemoryStateUpdaterTests {
         Assert.assertEquals("ReadIndex.exitRecoveryMode was called with the wrong arguments.", true, exitRecovery.args.get("successfulRecovery"));
     }
 
-    /**
-     * Tests the functionality of the flush() method, and that it can trigger future reads on the ReadIndex.
-     */
-    @Test
-    @SuppressWarnings("unchecked")
-    public void testFlush() throws Exception {
-        int segmentCount = 10;
-        int operationCountPerType = 5;
-
-        // Add to MTL + Add to ReadIndex (append; beginMerge).
-        SequencedItemList<Operation> opLog = new SequencedItemList<>();
-        ArrayList<TestReadIndex.MethodInvocation> methodInvocations = new ArrayList<>();
-        TestReadIndex readIndex = new TestReadIndex(methodInvocations::add);
-        AtomicInteger flushCallbackCallCount = new AtomicInteger();
-        MemoryStateUpdater updater = new MemoryStateUpdater(opLog, readIndex, flushCallbackCallCount::incrementAndGet);
-        ArrayList<Operation> operations = populate(updater, segmentCount, operationCountPerType);
-
-        methodInvocations.clear(); // We've already tested up to here.
-        updater.flush();
-        Assert.assertEquals("Unexpected number of calls to the ReadIndex triggerFutureReads method.", 1, methodInvocations.size());
-        Assert.assertEquals("Unexpected number of calls to the flushCallback provided in the constructor.", 1, flushCallbackCallCount.get());
-        TestReadIndex.MethodInvocation mi = methodInvocations.get(0);
-        Assert.assertEquals("No call to ReadIndex.triggerFutureReads() after call to flush().", TestReadIndex.TRIGGER_FUTURE_READS, mi.methodName);
-        Collection<Long> triggerSegmentIds = (Collection<Long>) mi.args.get("streamSegmentIds");
-        HashSet<Long> expectedSegmentIds = new HashSet<>();
-        for (Operation op : operations) {
-            if (op instanceof StorageOperation) {
-                expectedSegmentIds.add(((StorageOperation) op).getStreamSegmentId());
-            }
-        }
-
-        AssertExtensions.assertContainsSameElements("ReadIndex.triggerFutureReads() was called with the wrong set of StreamSegmentIds.", expectedSegmentIds, triggerSegmentIds);
-    }
-
-    private ArrayList<Operation> populate(MemoryStateUpdater updater, int segmentCount, int operationCountPerType) throws DataCorruptionException {
+    private ArrayList<Operation> populate(MemoryStateUpdater.Transaction transaction, int segmentCount, int operationCountPerType) throws DataCorruptionException {
         ArrayList<Operation> operations = new ArrayList<>();
         long offset = 0;
         for (int i = 0; i < segmentCount; i++) {
@@ -178,7 +170,7 @@ public class MemoryStateUpdaterTests {
 
         for (int i = 0; i < operations.size(); i++) {
             operations.get(i).setSequenceNumber(i);
-            updater.process(operations.get(i));
+            transaction.add(operations.get(i));
         }
 
         return operations;
