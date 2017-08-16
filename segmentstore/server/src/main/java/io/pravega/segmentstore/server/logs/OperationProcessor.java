@@ -33,12 +33,12 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Deque;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.function.Consumer;
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
 import lombok.Lombok;
@@ -432,9 +432,8 @@ class OperationProcessor extends AbstractThreadPoolService implements AutoClosea
             assert commitArgs.key() >= 0 : "DataFrameBuilder.CommitArgs does not have a key set";
             log.debug("{}: CommitSuccess ({}).", traceObjectId, commitArgs);
 
-            List<CompletableOperation> toComplete = new ArrayList<>();
             Map<CompletableOperation, Throwable> toFail = new HashMap<>();
-            MemoryStateUpdater.Transaction memTxn = null;
+            MemoryStateUpdater.CommitGroup commitGroup = null;
             try {
                 // Record the end of a frame in the DurableDataLog directly into the base metadata. No need for locking here,
                 // as the metadata has its own.
@@ -460,33 +459,36 @@ class OperationProcessor extends AbstractThreadPoolService implements AutoClosea
                     assert checkpointExists : "No Metadata UpdateTransaction found for " + commitArgs;
                     OperationProcessor.this.metadataUpdater.commit(commitArgs.key());
 
-                    // Acknowledge all pending entries, in the order in which they are in the queue (ascending seq no).
-                    memTxn = this.logUpdater.beginTransaction();
+                    Throwable stopException = OperationProcessor.this.getStopException();
+                    Consumer<CompletableOperation> acceptor;
+                    if (stopException == null) {
+                        // Create a CommitGroup and add all eligible pending entries, in the order in which they are in the
+                        // queue (ascending seq no). They will be processed later, after we ack them, and after we release
+                        // the stateLock.
+                        commitGroup = this.logUpdater.beginCommitGroup(this::commitMemoryUpdaterErrorHandler);
+                        acceptor = commitGroup::add;
+                    } else {
+                        // Even if the commit succeeded, we encountered a stop exception (fatal failure) and most likely
+                        // this operation will be corrupted in the DurableDataLog. Do not ack it as success. If the owning
+                        // Container does end up recovering successfully, it's up to the client to figure out the state
+                        // of the affected segments so it can resume operations.
+                        acceptor = op -> toFail.put(op, stopException);
+                    }
+
                     while (!this.pendingOperations.isEmpty()
                             && this.pendingOperations.peekFirst().getOperation().getSequenceNumber() <= lastOperationSequence) {
-                        CompletableOperation op = this.pendingOperations.pollFirst();
-                        Throwable stopException = OperationProcessor.this.getStopException();
-                        if (stopException != null) {
-                            // Even if the operation succeeded, we encountered a stop exception (fatal failure) and most likely
-                            // this operation will be corrupted in the DurableDataLog. Do not ack it as success. If the owning
-                            // Container does end up recovering successfully, it's up to the client to figure out the state
-                            // of the affected segments so it can resume operations.
-                            toFail.put(op, stopException);
-                        } else {
-                            memTxn.add(op.getOperation());
-                            toComplete.add(op);
-                        }
+                        acceptor.accept(this.pendingOperations.pollFirst());
                     }
 
                     this.highestCommittedDataFrame = addressSequence;
                 }
             } finally {
-                toComplete.forEach(CompletableOperation::complete);
+                if (commitGroup != null) {
+                    commitGroup.commit();
+                }
+
                 toFail.forEach(this::failOperation);
                 autoCompleteIfNeeded();
-                if(memTxn != null) {
-                    commitMemoryUpdaterTransaction(memTxn);
-                }
                 if (toFail.size() == 0) {
                     // Only record the commit if we had no failures.
                     this.checkpointPolicy.recordCommit(commitArgs.getDataFrameLength());
@@ -494,19 +496,14 @@ class OperationProcessor extends AbstractThreadPoolService implements AutoClosea
             }
         }
 
-        private void commitMemoryUpdaterTransaction(MemoryStateUpdater.Transaction memTxn){
-            try {
-                memTxn.commit();
-            } catch (Throwable ex) {
-                // MemoryStateUpdater.process() should only throw DataCorruptionExceptions, but just in case it
-                // throws something else (i.e. NullPtr), we still need to handle it.
-                // First, fail the operation, since it has already been taken off the pending list.
-                log.error("{}: MemoryStateUpdater.Transaction.CommitFailure. {}", traceObjectId, ex);
+        private void commitMemoryUpdaterErrorHandler(Throwable ex) {
+            // MemoryStateUpdater.commit() should only throw DataCorruptionExceptions, but just in case it
+            // throws something else (i.e. NullPtr), we still need to handle it.
+            log.error("{}: MemoryStateUpdater.CommitGroup.CommitFailure. {}", traceObjectId, ex);
 
-                // Then fail the remaining operations (which also handles fatal errors) and bail out.
-                if (isFatalException(ex)) {
-                    CallbackHelpers.invokeSafely(OperationProcessor.this::errorHandler, ex, null);
-                }
+            // Then fail the remaining operations (which also handles fatal errors) and bail out.
+            if (isFatalException(ex)) {
+                CallbackHelpers.invokeSafely(OperationProcessor.this::errorHandler, ex, null);
             }
         }
 
@@ -580,6 +577,8 @@ class OperationProcessor extends AbstractThreadPoolService implements AutoClosea
                 this.metadataTransactions.clear();
             }
 
+            // Rollback all metadata update transactions and make sure we ignore any DataFrame commit callbacks.
+            this.highestCommittedDataFrame = Long.MAX_VALUE;
             OperationProcessor.this.metadataUpdater.rollback(updateTransactionId);
 
             // Fail all pending entries.

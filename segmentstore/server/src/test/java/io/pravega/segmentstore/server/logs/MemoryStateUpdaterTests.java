@@ -20,6 +20,7 @@ import io.pravega.segmentstore.server.MetadataBuilder;
 import io.pravega.segmentstore.server.ReadIndex;
 import io.pravega.segmentstore.server.UpdateableContainerMetadata;
 import io.pravega.segmentstore.server.logs.operations.CachedStreamSegmentAppendOperation;
+import io.pravega.segmentstore.server.logs.operations.CompletableOperation;
 import io.pravega.segmentstore.server.logs.operations.MergeTransactionOperation;
 import io.pravega.segmentstore.server.logs.operations.Operation;
 import io.pravega.segmentstore.server.logs.operations.StorageOperation;
@@ -34,8 +35,10 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import lombok.Lombok;
 import lombok.val;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -63,7 +66,7 @@ public class MemoryStateUpdaterTests {
         TestReadIndex readIndex = new TestReadIndex(methodInvocations::add);
         AtomicInteger flushCallbackCallCount = new AtomicInteger();
         MemoryStateUpdater updater = new MemoryStateUpdater(opLog, readIndex, flushCallbackCallCount::incrementAndGet);
-        val txn = updater.beginTransaction();
+        val txn = updater.beginCommitGroup(Lombok::sneakyThrow);
         ArrayList<Operation> operations = populate(txn, segmentCount, operationCountPerType);
 
         // Verify they were properly processed.
@@ -151,7 +154,7 @@ public class MemoryStateUpdaterTests {
         Assert.assertEquals("ReadIndex.exitRecoveryMode was called with the wrong arguments.", true, exitRecovery.args.get("successfulRecovery"));
     }
 
-    private ArrayList<Operation> populate(MemoryStateUpdater.Transaction transaction, int segmentCount, int operationCountPerType) throws DataCorruptionException {
+    private ArrayList<Operation> populate(MemoryStateUpdater.CommitGroup commitGroup, int segmentCount, int operationCountPerType) throws DataCorruptionException {
         ArrayList<Operation> operations = new ArrayList<>();
         long offset = 0;
         for (int i = 0; i < segmentCount; i++) {
@@ -170,7 +173,7 @@ public class MemoryStateUpdaterTests {
 
         for (int i = 0; i < operations.size(); i++) {
             operations.get(i).setSequenceNumber(i);
-            transaction.add(operations.get(i));
+            commitGroup.add(new CompletableOperation(operations.get(i), new CompletableFuture<>()));
         }
 
         return operations;

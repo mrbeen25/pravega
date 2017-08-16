@@ -16,7 +16,7 @@ import io.pravega.common.LoggerHelpers;
 import io.pravega.common.ObjectClosedException;
 import io.pravega.common.Timer;
 import io.pravega.common.concurrent.FutureHelpers;
-import io.pravega.common.concurrent.SequentialAsyncProcessor;
+import io.pravega.common.concurrent.SequentialProcessor;
 import io.pravega.common.util.ArrayView;
 import io.pravega.common.util.CloseableIterator;
 import io.pravega.common.util.RetriesExhaustedException;
@@ -89,8 +89,8 @@ class BookKeeperLog implements DurableDataLog {
     @GuardedBy("lock")
     private LogMetadata logMetadata;
     private final WriteQueue writes;
-    private final SequentialAsyncProcessor writeProcessor;
-    private final SequentialAsyncProcessor rolloverProcessor;
+    private final SequentialProcessor writeProcessor;
+    private final SequentialProcessor rolloverProcessor;
 
     //endregion
 
@@ -116,8 +116,8 @@ class BookKeeperLog implements DurableDataLog {
         this.logNodePath = HierarchyUtils.getPath(logId, this.config.getZkHierarchyDepth());
         this.traceObjectId = String.format("Log[%d]", logId);
         this.writes = new WriteQueue(this.config.getMaxConcurrentWrites());
-        this.writeProcessor = new SequentialAsyncProcessor(this::processWritesSync, this.executorService);
-        this.rolloverProcessor = new SequentialAsyncProcessor(this::rollover, this.executorService);
+        this.writeProcessor = new SequentialProcessor(this::processWritesSync);
+        this.rolloverProcessor = new SequentialProcessor(this::rollover);
     }
 
     //endregion
@@ -213,7 +213,7 @@ class BookKeeperLog implements DurableDataLog {
         this.writes.add(new Write(data, getWriteLedger(), result));
 
         // Trigger Write Processor.
-        this.writeProcessor.runAsync();
+        this.writeProcessor.runAsync(this.executorService);
 
         // Post append tasks. We do not need to wait for these to happen before returning the call.
         result.whenCompleteAsync((address, ex) -> {
@@ -269,10 +269,10 @@ class BookKeeperLog implements DurableDataLog {
         if (getWriteLedger().ledger.isClosed()) {
             // Current ledger is closed. Execute the rollover processor to safely create a new ledger. This will reinvoke
             // the write processor upon finish, so the writes can be reattempted.
-            this.rolloverProcessor.runAsync();
+            this.rolloverProcessor.runAsync(this.executorService);
         } else if (!processPendingWrites() && !this.closed.get()) {
             // We were not able to complete execution of all writes. Try again.
-            this.writeProcessor.runAsync();
+            this.writeProcessor.runAsync(this.executorService);
         }
     }
 
@@ -336,7 +336,7 @@ class BookKeeperLog implements DurableDataLog {
         }
 
         // After every run where we did write, check if need to trigger a rollover.
-        this.rolloverProcessor.runAsync();
+        this.rolloverProcessor.runAsync(this.executorService);
         return true;
     }
 
@@ -441,7 +441,7 @@ class BookKeeperLog implements DurableDataLog {
             // Process all the appends in the queue after any change. This finalizes the completion, does retries (if needed)
             // and triggers more appends.
             try {
-                this.writeProcessor.runAsync();
+                this.writeProcessor.runAsync(this.executorService);
             } catch (ObjectClosedException ex) {
                 // In case of failures, the WriteProcessor may already be closed. We don't want the exception to propagate
                 // to BookKeeper.
@@ -678,7 +678,7 @@ class BookKeeperLog implements DurableDataLog {
         if (!l.isClosed() && l.getLength() < this.config.getBkLedgerMaxSize()) {
             // Nothing to do. Trigger the write processor just in case this rollover was invoked because the write
             // processor got a pointer to a LedgerHandle that was just closed by a previous run of the rollover processor.
-            this.writeProcessor.runAsync();
+            this.writeProcessor.runAsync(this.executorService);
             LoggerHelpers.traceLeave(log, this.traceObjectId, "rollover", traceId, false);
             return;
         }
@@ -717,7 +717,7 @@ class BookKeeperLog implements DurableDataLog {
 
         // It's possible that we have writes in the queue that didn't get picked up because they exceeded the predicted
         // ledger length. Invoke the Write Processor to execute them.
-        this.writeProcessor.runAsync();
+        this.writeProcessor.runAsync(this.executorService);
         LoggerHelpers.traceLeave(log, this.traceObjectId, "rollover", traceId, true);
     }
 

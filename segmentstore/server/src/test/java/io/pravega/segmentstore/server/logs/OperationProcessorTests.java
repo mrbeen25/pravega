@@ -11,6 +11,7 @@ package io.pravega.segmentstore.server.logs;
 
 import com.google.common.util.concurrent.Runnables;
 import com.google.common.util.concurrent.Service;
+import io.pravega.common.ObjectClosedException;
 import io.pravega.common.util.ArrayView;
 import io.pravega.common.util.CloseableIterator;
 import io.pravega.common.util.SequencedItemList;
@@ -372,14 +373,6 @@ public class OperationProcessorTests extends OperationLogTestBase {
                 operationProcessor.failureCause() instanceof DataLogWriterNotPrimaryException);
     }
 
-    @Test
-    public void testM() throws Exception {
-        for (int i = 0; i < 10000; i++) {
-            testWithDataCorruptionFailures();
-            System.out.println(i);
-        }
-    }
-
     /**
      * Tests the ability of the OperationProcessor to process Operations when a simulated DataCorruptionException
      * is generated.
@@ -534,7 +527,7 @@ public class OperationProcessorTests extends OperationLogTestBase {
         AssertExtensions.assertThrows(
                 "Operation did not fail with the right exception.",
                 () -> completionFuture.completion,
-                ex -> ex instanceof CancellationException);
+                ex -> ex instanceof CancellationException || ex instanceof ObjectClosedException);
     }
 
     private List<OperationWithCompletion> processOperations(Collection<Operation> operations, OperationProcessor operationProcessor) {

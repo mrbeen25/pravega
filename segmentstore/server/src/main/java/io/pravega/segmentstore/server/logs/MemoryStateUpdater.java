@@ -11,20 +11,25 @@ package io.pravega.segmentstore.server.logs;
 
 import com.google.common.base.Preconditions;
 import io.pravega.common.ExceptionHelpers;
+import io.pravega.common.concurrent.SequentialProcessor;
 import io.pravega.common.util.SequencedItemList;
 import io.pravega.segmentstore.server.ContainerMetadata;
 import io.pravega.segmentstore.server.DataCorruptionException;
 import io.pravega.segmentstore.server.ReadIndex;
 import io.pravega.segmentstore.server.logs.operations.CachedStreamSegmentAppendOperation;
+import io.pravega.segmentstore.server.logs.operations.CompletableOperation;
 import io.pravega.segmentstore.server.logs.operations.MergeTransactionOperation;
 import io.pravega.segmentstore.server.logs.operations.Operation;
 import io.pravega.segmentstore.server.logs.operations.StorageOperation;
 import io.pravega.segmentstore.server.logs.operations.StreamSegmentAppendOperation;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.NotThreadSafe;
@@ -41,10 +46,13 @@ class MemoryStateUpdater {
     private final ReadIndex readIndex;
     private final SequencedItemList<Operation> inMemoryOperationLog;
     private final Runnable flushCallback;
-    @GuardedBy("transactions")
-    private final ArrayDeque<Transaction> transactions;
+    @GuardedBy("pendingCommits")
+    private final ArrayDeque<CommitGroup> pendingCommits;
     private final AtomicBoolean recoveryMode;
-    private final Supplier<Long> nextTransactionId = new AtomicLong(0)::incrementAndGet;
+    private final Supplier<Long> nextId = new AtomicLong(0)::incrementAndGet;
+    @GuardedBy("pendingCommits")
+    private long commitUpTo = -1;
+    private final SequentialProcessor commitProcessor;
 
     //endregion
 
@@ -74,8 +82,9 @@ class MemoryStateUpdater {
         this.inMemoryOperationLog = inMemoryOperationLog;
         this.readIndex = readIndex;
         this.flushCallback = flushCallback;
-        this.transactions = new ArrayDeque<>();
+        this.pendingCommits = new ArrayDeque<>();
         this.recoveryMode = new AtomicBoolean();
+        this.commitProcessor = new SequentialProcessor(this::commitPending);
     }
 
     //endregion
@@ -103,38 +112,22 @@ class MemoryStateUpdater {
         this.recoveryMode.set(false);
     }
 
-    Transaction beginTransaction() {
-        Preconditions.checkState(!this.recoveryMode.get(), "MemoryStateUpdater.Transactions are only applicable in non-recovery mode.");
-        Transaction result = new Transaction(this.nextTransactionId.get(), this);
-        synchronized (this.transactions) {
-            this.transactions.addLast(result);
+    /**
+     * Creates a new CommitGroup and assigns it an order. All Operations added to this CommitGroup will be processed
+     * after all operations of prior CommitGroups and ahead of all operations of subsequent CommitGroups. Within a CommitGroup,
+     * operations will be processed in the order in which they are added to it.
+     *
+     * @param errorHandler A Consumer that will be invoked in case this CommitGroup fails to commit.
+     * @return A new CommitGroup.
+     */
+    CommitGroup beginCommitGroup(Consumer<Throwable> errorHandler) {
+        Preconditions.checkState(!this.recoveryMode.get(), "MemoryStateUpdater.CommitGroups are only applicable in non-recovery mode.");
+        CommitGroup result = new CommitGroup(this.nextId.get(), errorHandler);
+        synchronized (this.pendingCommits) {
+            this.pendingCommits.addLast(result);
         }
 
         return result;
-    }
-
-    private void commitTransaction(Transaction txn) throws DataCorruptionException {
-        HashSet<Long> segmentIds = new HashSet<>();
-        synchronized (this.transactions) {
-            Preconditions.checkArgument(!this.transactions.isEmpty()
-                            && txn.id >= this.transactions.peekFirst().id
-                            && txn.id <= this.transactions.peekLast().id,
-                    "Given transaction has already been committed.");
-            while (!this.transactions.isEmpty() && this.transactions.peekFirst().id <= txn.id) {
-                Transaction toProcess = this.transactions.removeFirst();
-                for (Operation operation : toProcess.operations) {
-                    long segmentId = process(operation);
-                    if (segmentId >= 0) {
-                        segmentIds.add(segmentId);
-                    }
-                }
-            }
-        }
-
-        this.readIndex.triggerFutureReads(segmentIds);
-        if (this.flushCallback != null) {
-            this.flushCallback.run();
-        }
     }
 
     /**
@@ -182,6 +175,58 @@ class MemoryStateUpdater {
     }
 
     /**
+     * Commits pending CommitGroups.
+     */
+    private void commitPending() {
+        HashSet<Long> segmentIds = new HashSet<>();
+
+        while (true) {
+            // Process all CommitGroups up to, and including the one identified by commitUpTo.
+            CommitGroup toProcess;
+            synchronized (this.pendingCommits) {
+                if (!this.pendingCommits.isEmpty() && this.pendingCommits.peekFirst().id <= this.commitUpTo) {
+                    toProcess = this.pendingCommits.removeFirst();
+                } else {
+                    break;
+                }
+            }
+
+            // Process all Operations within the CommitGroup in sequence.
+            for (CompletableOperation operation : toProcess.operations) {
+                try {
+                    long segmentId = process(operation.getOperation());
+                    if (segmentId >= 0) {
+                        segmentIds.add(segmentId);
+                    }
+                } catch (Throwable ex) {
+                    toProcess.commitErrorHandler.accept(ex);
+                }
+            }
+        }
+
+        // Trigger Future Reads on those segments which were touched by Appends or Seals.
+        this.readIndex.triggerFutureReads(segmentIds);
+        if (this.flushCallback != null) {
+            this.flushCallback.run();
+        }
+    }
+
+    /**
+     * Queues the given CommitGroup for committal.
+     */
+    private void queueForCommit(CommitGroup commitGroup) {
+        synchronized (this.pendingCommits) {
+            if (!this.pendingCommits.isEmpty()) {
+                Preconditions.checkArgument(commitGroup.id <= this.pendingCommits.peekLast().id,
+                        "Invalid CommitGroup (Id = %s).", commitGroup.id);
+            }
+            this.commitUpTo = Math.max(this.commitUpTo, commitGroup.id);
+        }
+
+        this.commitProcessor.run();
+    }
+
+    /**
      * Registers the given operation in the ReadIndex.
      *
      * @param operation The operation to register.
@@ -214,19 +259,34 @@ class MemoryStateUpdater {
 
     //endregion
 
+    //region CommitGroup
+
     @NotThreadSafe
     @RequiredArgsConstructor
-    static class Transaction {
+    class CommitGroup {
         private final long id;
-        private final MemoryStateUpdater updater;
-        private final ArrayList<Operation> operations = new ArrayList<>();
+        private final Consumer<Throwable> commitErrorHandler;
+        private List<CompletableOperation> operations = new ArrayList<>();
 
-        void add(Operation operation) {
+        /**
+         * Adds the given CompletableOperation to this CommitGroup.
+         *
+         * @param operation The CompletableOperation to add.
+         */
+        void add(CompletableOperation operation) {
             this.operations.add(operation);
         }
 
-        void commit() throws DataCorruptionException {
-            this.updater.commitTransaction(this);
+        /**
+         * Completes all CompletableOperations in this CommitGroup, then queues it up for committal. After this method
+         * is invoked, no further calls to add() are allowed.
+         */
+        void commit() {
+            this.operations = Collections.unmodifiableList(this.operations);
+            this.operations.forEach(CompletableOperation::complete);
+            MemoryStateUpdater.this.queueForCommit(this);
         }
     }
+
+    //endregion
 }
