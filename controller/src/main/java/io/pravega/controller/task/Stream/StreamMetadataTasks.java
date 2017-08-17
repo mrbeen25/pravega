@@ -197,7 +197,7 @@ public class StreamMetadataTasks extends TaskBase {
                                 if (cause instanceof ScaleOperationExceptions.ScalePreConditionFailureException) {
                                     response.setStatus(ScaleResponse.ScaleStreamStatus.PRECONDITION_FAILED);
                                 } else {
-                                    log.info("test: Scale for stream {}/{} failed with exception {}", scope, stream, cause);
+                                    log.debug("Scale for stream {}/{} failed with exception {}", scope, stream, cause);
                                     response.setStatus(ScaleResponse.ScaleStreamStatus.FAILURE);
                                 }
                             } else {
@@ -225,7 +225,7 @@ public class StreamMetadataTasks extends TaskBase {
      */
     public CompletableFuture<ScaleStatusResponse> checkScale(String scope, String stream, int epoch,
                                                                         OperationContext context) {
-        log.info("test: check scale called for stream {}/{} for epoch {}", scope, stream, epoch);
+        log.debug("check scale called for stream {}/{} for epoch {}", scope, stream, epoch);
         return streamMetadataStore.getActiveEpoch(scope, stream, context, true, executor)
                         .handle((activeEpoch, ex) -> {
                             ScaleStatusResponse.Builder response = ScaleStatusResponse.newBuilder();
@@ -272,7 +272,7 @@ public class StreamMetadataTasks extends TaskBase {
                     result.completeExceptionally(new ScaleOperationExceptions.ScalePostException());
                 }
             } else {
-                log.info("test: scale event posted successfully");
+                log.debug("scale event posted successfully");
                 result.complete(null);
             }
         });
@@ -311,7 +311,7 @@ public class StreamMetadataTasks extends TaskBase {
      * does not get stuck in an incomplete state and hence we also post a request for its processing in scale event stream.
      * However we want to process the scale request inline with the callers call so that we can send the response. And we want to
      * make sure that we dont do any processing on the scale request if caller may have responded with some pre condition failure.
-     * So we send this flag to the event processor to process the scale request only if it was already started. Otherwise ignore. 
+     * So we send this flag to the event processor to process the scale request only if it was already started. Otherwise ignore.
      *
      * @param scaleInput scale input
      * @param runOnlyIfStarted run only if the scale operation was already running. It will ignore requests if the operation isnt started
@@ -361,7 +361,7 @@ public class StreamMetadataTasks extends TaskBase {
                     if (!response.isDeleted()) {
                         return CompletableFuture.completedFuture(true);
                     }
-                    log.info("test: epoch {} deleted for for stream {}/{} ", epoch, scope, stream);
+                    log.debug("epoch {} deleted for for stream {}/{} ", epoch, scope, stream);
 
                     assert !response.getSegmentsCreated().isEmpty() && !response.getSegmentsSealed().isEmpty();
 
@@ -378,7 +378,7 @@ public class StreamMetadataTasks extends TaskBase {
                                                                           StreamConfiguration config, long timestamp) {
         return this.streamMetadataStore.createStream(scope, stream, config, timestamp, null, executor)
                 .thenComposeAsync(response -> {
-                    log.info("test: {}/{} created in metadata store", scope, stream);
+                    log.debug("{}/{} created in metadata store", scope, stream);
                     CreateStreamStatus.Status status = translate(response.getStatus());
                     // only if its a new stream or an already existing non-active stream then we will create
                     // segments and change the state of the stream to active.
@@ -437,7 +437,7 @@ public class StreamMetadataTasks extends TaskBase {
 
         return streamMetadataStore.updateConfiguration(scope, stream, config, context, executor)
                 .thenCompose(updated -> {
-                    log.info("test: {}/{} created in metadata store", scope, stream);
+                    log.debug("{}/{} created in metadata store", scope, stream);
                     if (updated) {
                         // we are at a point of no return. Metadata has been updated, we need to notify hosts.
                         // wrap subsequent steps in retries.

@@ -105,7 +105,6 @@ public class EndToEndWithScaleTest {
         Controller controller = controllerWrapper.getController();
         controllerWrapper.getControllerService().createScope("test").get();
         controller.createStream(config).get();
-        log.info("test: stream created");
         @Cleanup
         ConnectionFactory connectionFactory = new ConnectionFactoryImpl(false);
         @Cleanup
@@ -114,7 +113,6 @@ public class EndToEndWithScaleTest {
         EventStreamWriter<String> writer = clientFactory.createEventWriter("test", new JavaSerializer<>(),
                 EventWriterConfig.builder().build());
         writer.writeEvent("0", "txntest1").get();
-        log.info("test: event written pre scale");
 
         // scale
         Stream stream = new StreamImpl("test", "test");
