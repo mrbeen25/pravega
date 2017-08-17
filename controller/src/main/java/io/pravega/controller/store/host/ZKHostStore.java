@@ -52,6 +52,7 @@ public class ZKHostStore implements HostControllerStore {
 
         zkClient = client;
         zkPath = ZKPaths.makePath("cluster", "segmentContainerHostMapping");
+        log.info("Creating SegmentToContainerMapper with container count {}", containerCount);
         segmentMapper = new SegmentToContainerMapper(containerCount);
     }
 
