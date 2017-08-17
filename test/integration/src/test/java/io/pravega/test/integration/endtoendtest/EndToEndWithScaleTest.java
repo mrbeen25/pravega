@@ -105,7 +105,7 @@ public class EndToEndWithScaleTest {
         Controller controller = controllerWrapper.getController();
         controllerWrapper.getControllerService().createScope("test").get();
         controller.createStream(config).get();
-        log.debug("stream created");
+        log.info("test: stream created");
         @Cleanup
         ConnectionFactory connectionFactory = new ConnectionFactoryImpl(false);
         @Cleanup
@@ -114,7 +114,7 @@ public class EndToEndWithScaleTest {
         EventStreamWriter<String> writer = clientFactory.createEventWriter("test", new JavaSerializer<>(),
                 EventWriterConfig.builder().build());
         writer.writeEvent("0", "txntest1").get();
-        log.debug("event written pre scale");
+        log.info("test: event written pre scale");
 
         // scale
         Stream stream = new StreamImpl("test", "test");
@@ -124,10 +124,10 @@ public class EndToEndWithScaleTest {
         map.put(0.66, 1.0);
         Boolean result = controller.scaleStream(stream, Collections.singletonList(0), map, executor).getFuture().get();
         assertTrue(result);
-        log.debug("stream scaled");
+        log.info("test: stream scaled");
 
         writer.writeEvent("0", "txntest2").get();
-        log.debug("event written post scale");
+        log.info("test: event written post scale");
 
         @Cleanup
         ReaderGroupManager groupManager = new ReaderGroupManagerImpl("test", controller, clientFactory, connectionFactory);
@@ -138,11 +138,11 @@ public class EndToEndWithScaleTest {
         EventRead<String> event = reader.readNextEvent(10000);
         assertNotNull(event);
         assertEquals("txntest1", event.getEvent());
-        log.debug("first event read");
+        log.info("test: first event read");
 
         event = reader.readNextEvent(10000);
         assertNotNull(event);
         assertEquals("txntest2", event.getEvent());
-        log.debug("second event read");
+        log.info("test: second event read");
     }
 }

@@ -397,7 +397,7 @@ public abstract class PersistentStreamBase<T> implements Stream {
         return setSegmentTable(updatedData)
                 .thenApply(z -> new ImmutablePair<>(activeEpoch, nextSegmentNumber))
                 .thenApply(response -> {
-                    log.debug("scale {}/{} new segments created successfully", scope, name);
+                    log.info("test: scale {}/{} new segments created successfully", scope, name);
                     return response;
                 });
     }
@@ -408,12 +408,12 @@ public abstract class PersistentStreamBase<T> implements Stream {
                                                                           final int activeEpoch) {
         int nextSegmentNumber;
         if (TableHelper.isRerunOf(sealedSegments, newRanges, historyTable.getData(), segmentTable.getData())) {
-            log.debug("rerunning scale for stream {}/{} with segments to seal {}", scope, name, sealedSegments);
+            log.info("test: rerunning scale for stream {}/{} with segments to seal {}", scope, name, sealedSegments);
             // rerun means segment table is already updated. No need to do anything
             nextSegmentNumber = TableHelper.getSegmentCount(segmentTable.getData()) - newRanges.size();
             return CompletableFuture.completedFuture(new ImmutablePair<>(activeEpoch, nextSegmentNumber));
         } else {
-            log.debug("scale conflict for stream {}/{} with segments to seal {}", scope, name, sealedSegments);
+            log.info("test: scale conflict for stream {}/{} with segments to seal {}", scope, name, sealedSegments);
 
             return FutureHelpers.failedFuture(new ScaleOperationExceptions.ScaleStartException());
         }
@@ -452,14 +452,14 @@ public abstract class PersistentStreamBase<T> implements Stream {
                     CompletableFuture<Boolean> result = new CompletableFuture<>();
 
                     if (TableHelper.isScaleOngoing(historyTable.getData(), segmentTable.getData())) {
-                        log.debug("scale ongoing for stream {}/{} for epoch {}", scope, name, epoch);
+                        log.info("test: scale ongoing for stream {}/{} for epoch {}", scope, name, epoch);
                         deleteEpochNode(epoch)
                                 .whenComplete((r, e) -> {
                                     if (e != null) {
                                         Throwable ex = ExceptionHelpers.getRealException(e);
                                         if (ex instanceof StoreException.DataNotEmptyException) {
                                             // cant delete as there are transactions still running under epoch node
-                                            log.debug("stream {}/{} epoch {} not empty", scope, name, epoch);
+                                            log.info("test: stream {}/{} epoch {} not empty", scope, name, epoch);
                                             result.complete(false);
                                         } else {
                                             log.warn("stream {}/{} deleting epoch {} threw exception {}", scope, name, epoch, ex.getClass().getName());
@@ -467,13 +467,13 @@ public abstract class PersistentStreamBase<T> implements Stream {
                                             result.completeExceptionally(ex);
                                         }
                                     } else {
-                                        log.debug("stream {}/{} deleted epoch {} ", scope, name, epoch);
+                                        log.info("test: stream {}/{} deleted epoch {} ", scope, name, epoch);
 
                                         result.complete(true);
                                     }
                                 });
                     } else {
-                        log.debug("no scale running for stream {}/{} for epoch {}, ignoring delete epoch", scope, name, epoch);
+                        log.info("test: no scale running for stream {}/{} for epoch {}, ignoring delete epoch", scope, name, epoch);
 
                         result.complete(false);
                     }
@@ -848,7 +848,7 @@ public abstract class PersistentStreamBase<T> implements Stream {
                         }
 
                         if (idempotent) {
-                            log.debug("{}/{} scale op for epoch {} - history record already added", scope, name, epoch);
+                            log.info("test: {}/{} scale op for epoch {} - history record already added", scope, name, epoch);
                             return CompletableFuture.completedFuture(null);
                         } else {
                             log.warn("{}/{} scale op for epoch {}. Scale already completed.", scope, name, epoch);
@@ -866,7 +866,7 @@ public abstract class PersistentStreamBase<T> implements Stream {
                     return createNewEpoch(latestEpoch).thenCompose(v -> updateHistoryTable(updated))
                             .whenComplete((r, e) -> {
                                 if (e == null) {
-                                    log.debug("{}/{} scale op for epoch {}. Creating new epoch and updating history table.", scope, name, epoch);
+                                    log.info("test: {}/{} scale op for epoch {}. Creating new epoch and updating history table.", scope, name, epoch);
                                 } else {
                                     log.warn("{}/{} scale op for epoch {}. Failed to update history table. {}", scope, name, epoch, e.getClass().getName());
                                 }
@@ -890,11 +890,11 @@ public abstract class PersistentStreamBase<T> implements Stream {
                     if (!lastRecord.isPartial()) {
                         if (lastRecord.getSegments().stream().noneMatch(sealedSegments::contains) &&
                                 newSegments.stream().allMatch(x -> lastRecord.getSegments().contains(x))) {
-                            log.debug("{}/{} scale already completed for epoch {}.", scope, name, activeEpoch);
+                            log.info("test: {}/{} scale already completed for epoch {}.", scope, name, activeEpoch);
 
                             return CompletableFuture.completedFuture(null);
                         } else {
-                            log.debug("{}/{} scale complete attempt invalid for epoch {}.", scope, name, activeEpoch);
+                            log.info("test: {}/{} scale complete attempt invalid for epoch {}.", scope, name, activeEpoch);
 
                             throw new ScaleOperationExceptions.ScaleConditionInvalidException();
                         }
@@ -922,7 +922,7 @@ public abstract class PersistentStreamBase<T> implements Stream {
                                 if (e != null) {
                                     log.warn("{}/{} attempt to complete scale for epoch {}. {}", scope, name, activeEpoch, e.getClass().getName());
                                 } else {
-                                    log.debug("{}/{} scale complete, index and history tables updated for epoch {}.", scope, name, activeEpoch);
+                                    log.info("test: {}/{} scale complete, index and history tables updated for epoch {}.", scope, name, activeEpoch);
                                 }
                             });
                 });

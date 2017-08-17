@@ -197,7 +197,7 @@ public class StreamMetadataTasks extends TaskBase {
                                 if (cause instanceof ScaleOperationExceptions.ScalePreConditionFailureException) {
                                     response.setStatus(ScaleResponse.ScaleStreamStatus.PRECONDITION_FAILED);
                                 } else {
-                                    log.debug("Scale for stream {}/{} failed with exception {}", scope, stream, cause);
+                                    log.info("test: Scale for stream {}/{} failed with exception {}", scope, stream, cause);
                                     response.setStatus(ScaleResponse.ScaleStreamStatus.FAILURE);
                                 }
                             } else {
@@ -225,7 +225,7 @@ public class StreamMetadataTasks extends TaskBase {
      */
     public CompletableFuture<ScaleStatusResponse> checkScale(String scope, String stream, int epoch,
                                                                         OperationContext context) {
-        log.debug("check scale called for stream {}/{} for epoch {}", scope, stream, epoch);
+        log.info("test: check scale called for stream {}/{} for epoch {}", scope, stream, epoch);
         return streamMetadataStore.getActiveEpoch(scope, stream, context, true, executor)
                         .handle((activeEpoch, ex) -> {
                             ScaleStatusResponse.Builder response = ScaleStatusResponse.newBuilder();
@@ -272,7 +272,7 @@ public class StreamMetadataTasks extends TaskBase {
                     result.completeExceptionally(new ScaleOperationExceptions.ScalePostException());
                 }
             } else {
-                log.debug("scale event posted successfully");
+                log.info("test: scale event posted successfully");
                 result.complete(null);
             }
         });
@@ -361,7 +361,7 @@ public class StreamMetadataTasks extends TaskBase {
                     if (!response.isDeleted()) {
                         return CompletableFuture.completedFuture(true);
                     }
-                    log.debug("epoch {} deleted for for stream {}/{} ", epoch, scope, stream);
+                    log.info("test: epoch {} deleted for for stream {}/{} ", epoch, scope, stream);
 
                     assert !response.getSegmentsCreated().isEmpty() && !response.getSegmentsSealed().isEmpty();
 
@@ -378,7 +378,7 @@ public class StreamMetadataTasks extends TaskBase {
                                                                           StreamConfiguration config, long timestamp) {
         return this.streamMetadataStore.createStream(scope, stream, config, timestamp, null, executor)
                 .thenComposeAsync(response -> {
-                    log.debug("{}/{} created in metadata store", scope, stream);
+                    log.info("test: {}/{} created in metadata store", scope, stream);
                     CreateStreamStatus.Status status = translate(response.getStatus());
                     // only if its a new stream or an already existing non-active stream then we will create
                     // segments and change the state of the stream to active.
@@ -437,7 +437,7 @@ public class StreamMetadataTasks extends TaskBase {
 
         return streamMetadataStore.updateConfiguration(scope, stream, config, context, executor)
                 .thenCompose(updated -> {
-                    log.debug("{}/{} created in metadata store", scope, stream);
+                    log.info("test: {}/{} created in metadata store", scope, stream);
                     if (updated) {
                         // we are at a point of no return. Metadata has been updated, we need to notify hosts.
                         // wrap subsequent steps in retries.
