@@ -122,7 +122,6 @@ public class EndToEndWithScaleTest {
         map.put(0.66, 1.0);
         Boolean result = controller.scaleStream(stream, Collections.singletonList(0), map, executor).getFuture().get();
         assertTrue(result);
-        log.info("test: stream scaled");
 
         writer.writeEvent("0", "txntest2").get();
         log.info("test: event written post scale");
