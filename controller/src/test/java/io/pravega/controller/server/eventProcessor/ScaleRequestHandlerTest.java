@@ -36,6 +36,7 @@ import io.pravega.controller.util.Config;
 import io.pravega.shared.controller.event.AutoScaleEvent;
 import io.pravega.shared.controller.event.ControllerEvent;
 import io.pravega.test.common.TestingServerStarter;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.ExponentialBackoffRetry;
@@ -63,6 +64,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+@Slf4j
 public class ScaleRequestHandlerTest {
     private final String scope = "scope";
     private final String stream = "stream";
@@ -146,6 +148,7 @@ public class ScaleRequestHandlerTest {
         CompletableFuture<ScaleOpEvent> request1 = new CompletableFuture<>();
         CompletableFuture<ScaleOpEvent> request2 = new CompletableFuture<>();
         EventStreamWriter<ControllerEvent> writer = createWriter(x -> {
+            log.debug("event received {}", x);
             if (!request1.isDone()) {
                 final ArrayList<AbstractMap.SimpleEntry<Double, Double>> expected = new ArrayList<>();
                 double start = 2.0 / 3.0;
@@ -154,20 +157,26 @@ public class ScaleRequestHandlerTest {
                 expected.add(new AbstractMap.SimpleEntry<>(start, middle));
                 expected.add(new AbstractMap.SimpleEntry<>(middle, end));
                 checkRequest(request1, x, Lists.newArrayList(2), expected);
+                log.debug("request1 is done = {}", request1.isDone());
             } else if (!request2.isDone()) {
                 final ArrayList<AbstractMap.SimpleEntry<Double, Double>> expected = new ArrayList<>();
                 double start = 2.0 / 3.0;
                 double end = 1.0;
                 expected.add(new AbstractMap.SimpleEntry<>(start, end));
                 checkRequest(request2, x, Lists.newArrayList(3, 4), expected);
+                log.debug("request2 is done = {}", request1.isDone());
             }
         });
 
         when(clientFactory.createEventWriter(eq(Config.SCALE_STREAM_NAME), eq(new JavaSerializer<ControllerEvent>()), any())).thenReturn(writer);
 
+        // processing auto scale event
         assertTrue(FutureHelpers.await(multiplexer.process(request)));
+        log.debug("scale up event posted");
         assertTrue(FutureHelpers.await(request1));
+        log.debug("scale up event received");
         assertTrue(FutureHelpers.await(multiplexer.process(request1.get())));
+        log.debug("scale up processing done");
 
         // verify that the event is posted successfully
         List<Segment> activeSegments = streamStore.getActiveSegments(scope, stream, null, executor).get();
@@ -190,7 +199,10 @@ public class ScaleRequestHandlerTest {
 
         assertTrue(FutureHelpers.await(multiplexer.process(request)));
         assertTrue(FutureHelpers.await(request2));
+        log.debug("scale down event posted for segment 3, 4");
+
         assertTrue(FutureHelpers.await(multiplexer.process(request2.get())));
+        log.debug("scale down processing done for segment 3, 4");
 
         activeSegments = streamStore.getActiveSegments(scope, stream, null, executor).get();
 

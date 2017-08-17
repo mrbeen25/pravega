@@ -225,6 +225,7 @@ public class StreamMetadataTasks extends TaskBase {
      */
     public CompletableFuture<ScaleStatusResponse> checkScale(String scope, String stream, int epoch,
                                                                         OperationContext context) {
+        log.debug("check scale called for stream {}/{} for epoch {}", scope, stream, epoch);
         return streamMetadataStore.getActiveEpoch(scope, stream, context, true, executor)
                         .handle((activeEpoch, ex) -> {
                             ScaleStatusResponse.Builder response = ScaleStatusResponse.newBuilder();
@@ -360,6 +361,8 @@ public class StreamMetadataTasks extends TaskBase {
                     if (!response.isDeleted()) {
                         return CompletableFuture.completedFuture(true);
                     }
+                    log.debug("epoch {} deleted for for stream {}/{} ", epoch, scope, stream);
+
                     assert !response.getSegmentsCreated().isEmpty() && !response.getSegmentsSealed().isEmpty();
 
                     long scaleTs = response.getSegmentsCreated().get(0).getStart();

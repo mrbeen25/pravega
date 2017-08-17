@@ -405,6 +405,7 @@ public class ControllerEventProcessors extends AbstractIdleService implements Fa
         abortEventProcessors.awaitRunning();
         log.info("Awaiting start of request event processors");
         requestEventProcessors.awaitRunning();
+        log.info("Event processors initialized");
     }
 
     private void stopEventProcessors() {

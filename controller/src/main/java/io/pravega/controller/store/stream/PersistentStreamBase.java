@@ -452,6 +452,7 @@ public abstract class PersistentStreamBase<T> implements Stream {
                     CompletableFuture<Boolean> result = new CompletableFuture<>();
 
                     if (TableHelper.isScaleOngoing(historyTable.getData(), segmentTable.getData())) {
+                        log.debug("scale ongoing for stream {}/{} for epoch {}", scope, name, epoch);
                         deleteEpochNode(epoch)
                                 .whenComplete((r, e) -> {
                                     if (e != null) {
@@ -472,6 +473,8 @@ public abstract class PersistentStreamBase<T> implements Stream {
                                     }
                                 });
                     } else {
+                        log.debug("no scale running for stream {}/{} for epoch {}, ignoring delete epoch", scope, name, epoch);
+
                         result.complete(false);
                     }
                     return result;
