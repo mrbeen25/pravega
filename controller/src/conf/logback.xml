@@ -36,7 +36,7 @@
         </encoder>
     </appender>
 
-    <root level="${log.level:-INFO}">
+    <root level="${log.level:-DEBUG}">
         <appender-ref ref="consoleAppender"/>
         <appender-ref ref="FILE"/>
     </root>
