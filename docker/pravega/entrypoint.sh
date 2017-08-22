@@ -40,11 +40,11 @@ configure_tier2() {
         done
 
         NFS_MOUNT=${NFS_MOUNT:-"/fs/"}
-        echo "Mounting the NFS share"
+        echo "Mounting the NFS share" ${NFS_SERVER} " at " ${NFS_MOUNT}
         mkdir -p ${NFS_MOUNT}
         while [ true ]
         do
-            mount -t nfs ${NFS_SERVER} ${NFS_MOUNT} -o nolock && break
+            mount -t nfs -v ${NFS_SERVER} ${NFS_MOUNT} -o nolock && break
             echo "Mount failed. Retrying after 5 sec ..."
             sleep 5
         done

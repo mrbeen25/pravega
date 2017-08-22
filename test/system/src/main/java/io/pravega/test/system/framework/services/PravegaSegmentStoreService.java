@@ -135,7 +135,7 @@ public class PravegaSegmentStoreService extends MarathonBasedService {
         map.put("CONTROLLER_URL", conUri.toString());
         map.put("TIER2_STORAGE", "FILESYSTEM");
         map.put("MOUNT_IN_CONTAINER", "true");
-        map.put("NFS_SERVER", "10.245.109.46:/ifs/jarvis/revanche/pravega");
+        map.put("NFS_SERVER", "10.245.109.46:/ifs/jarvis/captain-americasteve-r/pravega");
 
         //Properties set to override defaults for system tests
         String hostSystemProperties = setSystemProperty("autoScale.muteInSeconds", "120") +
