@@ -137,7 +137,6 @@ public class PravegaSegmentStoreService extends MarathonBasedService {
         map.put("MOUNT_IN_CONTAINER", "true");
         map.put("NFS_SERVER", "10.245.109.46:/ifs/jarvis/revanche/pravega");
 
-
         //Properties set to override defaults for system tests
         String hostSystemProperties = setSystemProperty("autoScale.muteInSeconds", "120") +
                 setSystemProperty("autoScale.cooldownInSeconds", "120") +
