@@ -113,6 +113,7 @@ public class PravegaSegmentStoreService extends MarathonBasedService {
         app.getContainer().getDocker().setImage(IMAGE_PATH + "/nautilus/pravega:" + PRAVEGA_VERSION);
         app.getContainer().getDocker().setNetwork(NETWORK_TYPE);
         app.getContainer().getDocker().setForcePullImage(FORCE_IMAGE);
+        app.getContainer().getDocker().setPrivileged(true);
         List<Parameter> parameterList = new ArrayList<>();
         Parameter element1 = new Parameter("env", "JAVA_OPTS=-Xmx900m");
         parameterList.add(element1);
