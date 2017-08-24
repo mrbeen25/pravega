@@ -36,14 +36,14 @@ import java.util.stream.Collectors;
  * Zookeeper based checkpoint store.
  */
 @Slf4j
-class ZKCheckpointStore implements CheckpointStore {
+public class ZKCheckpointStore implements CheckpointStore {
 
     private static final String ROOT = "eventProcessors";
     private final CuratorFramework client;
     private final JavaSerializer<Position> positionSerializer;
     private final JavaSerializer<ReaderGroupData> groupDataSerializer;
 
-    ZKCheckpointStore(CuratorFramework client) {
+    public ZKCheckpointStore(CuratorFramework client) {
         this.client = client;
         this.positionSerializer = new JavaSerializer<>();
         this.groupDataSerializer = new JavaSerializer<>();
