@@ -66,7 +66,7 @@ class ExternalAdapter extends ClientAdapterBase {
             // Create Client Factory.
             this.clientFactory.set(ClientFactory.withScope(SCOPE, controllerUri));
 
-            // Create, Seal and Delete a dummy segment - this verifies that the client is properly setup and that all the
+            // Create, Seal and Delete a zkdebugtool segment - this verifies that the client is properly setup and that all the
             // components are running properly.
             String testStreamName = "Ping" + Long.toHexString(System.currentTimeMillis());
             this.streamManager.get().createStream(SCOPE, testStreamName, StreamConfiguration.builder().build());

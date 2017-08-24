@@ -57,7 +57,7 @@ public class HostMonitorConfigImpl implements HostMonitorConfig {
      * This method should only be used for test purposes where the segment store service is either mocked. or
      * started at port 12345 on local host. For any other purposes, it is best to use HostMonitorConfigImpl builder.
      *
-     * @return HostMonitorConfig with dummy values.
+     * @return HostMonitorConfig with zkdebugtool values.
      */
     @VisibleForTesting
     public static HostMonitorConfig dummyConfig() {

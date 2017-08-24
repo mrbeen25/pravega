@@ -1,0 +1,68 @@
+/**
+ * Copyright (c) 2017 Dell Inc., or its subsidiaries. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ */
+
+group 'io.pravega'
+version '0.1.0-SNAPSHOT'
+
+apply plugin: 'java'
+
+sourceCompatibility = 1.8
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    testCompile group: 'junit', name: 'junit', version: '4.12'
+}
+
+sourceSets {
+    main.resources.srcDirs += "$projectDir/src/conf"
+}
+
+apply plugin: 'application'
+applicationName = "zkdebugtool"
+mainClassName = "io.pravega.zkdebugtool.Main"
+applicationDefaultJvmArgs = ["-server", "-Xms128m", "-XX:+HeapDumpOnOutOfMemoryError",
+                             "-Dconfig.file=PRAVEGA_APP_HOME/conf/controller.conf",
+                             "-Dlogback.configurationFile=PRAVEGA_APP_HOME/conf/logback.xml",
+                             "-Dlog.dir=PRAVEGA_APP_HOME/logs",
+                             "-Dlog.name=controller"]
+
+applicationDistribution.from('src/conf') {
+    into "conf"
+    rename "application.conf", "controller.conf"
+}
+
+dependencies {
+    compile project(':controller')
+    compile project(':common')
+    compile project(":shared:controller-api")
+    compile project(":client")
+    compile project(":shared:metrics")
+    runtime group: 'ch.qos.logback', name: 'logback-classic', version: qosLogbackVersion
+    compile group: 'javax.servlet', name: 'servlet-api', version: javaxServletApiVersion
+    compile(group: 'io.swagger', name : 'swagger-jersey2-jaxrs', version :swaggerJersey2JaxrsVersion) {
+        exclude group: 'com.google.guava', module: 'guava'
+    }
+    compile group: 'com.google.code.findbugs', name: 'annotations', version: findbugsVersion
+    compile group: 'com.typesafe', name: 'config', version: typesafeConfigVersion
+    compile group: 'org.apache.curator', name: 'curator-framework', version: apacheCuratorVersion
+    compile group: 'org.apache.curator', name: 'curator-recipes', version: apacheCuratorVersion
+    compile group: 'org.apache.curator', name: 'curator-client', version: apacheCuratorVersion
+    compile group: 'org.apache.commons', name: 'commons-lang3', version: commonsLang3Version
+    compile group: 'org.glassfish.jersey.containers', name: 'jersey-container-grizzly2-http', version: jerseyVersion
+    compile group: 'org.glassfish.jersey.media', name: 'jersey-media-json-jackson', version: jerseyVersion
+    testCompile project(':test:testcommon')
+    testCompile group: 'org.apache.curator', name: 'curator-test', version: apacheCuratorVersion
+}
+
+

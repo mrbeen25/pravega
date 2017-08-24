@@ -858,7 +858,7 @@ public class StreamSegmentContainerTests extends ThreadPooledTestSuite {
         val storageInfo = context.storage.getStreamSegmentInfo(segmentName, TIMEOUT).get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
         Assert.assertEquals("Unexpected length in storage for segment.", sp.getLength(), storageInfo.getLength());
 
-        // Delete segment and wait until it is forgotten again (we need to create another dummy segment so that we can
+        // Delete segment and wait until it is forgotten again (we need to create another zkdebugtool segment so that we can
         // force a Metadata Truncation in order to facilitate that; this is the purpose of segment2).
         localContainer.deleteStreamSegment(segmentName, TIMEOUT).get(TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
 

@@ -157,7 +157,7 @@ public class TaskTest {
         CreateStreamStatus.Status status = streamMetadataTasks.createStream(SCOPE, stream1, configuration1, System.currentTimeMillis()).join();
         assertTrue(status.equals(CreateStreamStatus.Status.STREAM_EXISTS));
         streamStore.createScope(SCOPE);
-        CreateStreamStatus.Status result = streamMetadataTasks.createStream(SCOPE, "dummy", configuration1,
+        CreateStreamStatus.Status result = streamMetadataTasks.createStream(SCOPE, "zkdebugtool", configuration1,
                 System.currentTimeMillis()).join();
         assertEquals(result, CreateStreamStatus.Status.SUCCESS);
     }
