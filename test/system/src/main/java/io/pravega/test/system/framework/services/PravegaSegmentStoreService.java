@@ -134,12 +134,13 @@ public class PravegaSegmentStoreService extends MarathonBasedService {
         map.put("BK_ZK_URL", zk);
         map.put("HDFS_URL", "hdfs.marathon.containerip.dcos.thisdcos.directory:8020");
         map.put("CONTROLLER_URL", conUri.toString());
-        map.put("EXTENDEDS3_SECRET_KEY", "gTeeFlYhMwffDUUCnOvburDsYn0QzaFrTe3hMchZ");
         map.put("TIER2_STORAGE", "EXTENDEDS3");
-        map.put("EXTENDEDS3_ROOT", "jarvis/speedball/pravega/");
+        map.put("EXTENDEDS3_SECRET_KEY", "HUtGQwQWWaf5YUeOo+HerBuMIn8tDP1h0BCPlc82");
+        map.put("EXTENDEDS3_ACCESS_KEY_ID", "hdfs");
+        map.put("EXTENDEDS3_ROOT", "jarvis/hate-monger/pravega/");
         map.put("EXTENDEDS3_NAMESPACE", "nautilus");
         map.put("EXTENDEDS3_BUCKET", "shared");
-        map.put("EEXTENDEDS3_URI", "http://10.249.245.91:9020");
+        map.put("EXTENDEDS3_URI", "http://10.249.245.91:9020");
 
         //Properties set to override defaults for system tests
         String hostSystemProperties = setSystemProperty("autoScale.muteInSeconds", "120") +
