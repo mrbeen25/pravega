@@ -23,8 +23,8 @@ include 'common',
         'segmentstore:server:host',
         'controller',
         'standalone',
+        'zkdebugtool',
         'test:testcommon',
         'test:integration',
         'test:system'
-include 'zkdebugtool'
 
