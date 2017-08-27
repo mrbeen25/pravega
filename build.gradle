@@ -485,6 +485,7 @@ project('test:system') {
         compile group: 'com.mesosphere', name: 'marathon-client', version: marathonClientVersion
         compile project(':controller')
         compile project(":client")
+        compile project(":zkdebugtool")
         compile project(":test:testcommon")
         compile group: 'junit', name: 'junit', version: junitVersion
         compile group: 'javax.ws.rs', name: 'javax.ws.rs-api', version: javaxwsrsApiVersion

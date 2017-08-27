@@ -31,6 +31,7 @@ import io.pravega.controller.store.checkpoint.ZKCheckpointStore;
 import io.pravega.controller.store.stream.Segment;
 import io.pravega.controller.store.stream.StreamMetadataStore;
 import io.pravega.controller.store.stream.StreamStoreFactory;
+import io.pravega.controller.store.stream.tables.IndexRecord;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
@@ -66,8 +67,8 @@ public class Main {
             System.out.println("Enter Stream name: ");
             String stream = scanner.nextLine();
 
-            System.out.println("1. Stream metadata \n" +
-                    "2. Read Stream data \n" +
+            System.out.println("1. Stream data \n" +
+                    "2. Stream metadata \n" +
                     "3. Quit");
             Integer option = Integer.parseInt(scanner.nextLine());
 
@@ -81,6 +82,35 @@ public class Main {
                 default:
                     System.exit(0);
             }
+        }
+
+    }
+
+    public static void printAllMetadata(String scope, String stream, String zkURL, ScheduledExecutorService executor) {
+        try {
+            String ns = "pravega/pravega-cluster";
+            final CuratorFramework zkClient = createZKClient(zkURL, ns);
+
+            ZKStream zkStream = new ZKStream(scope, stream, new ZKStoreHelper(zkClient, executor));
+            StreamMetadataStore store = StreamStoreFactory.createZKStore(zkClient, executor);
+            log.info("printing segment table");
+            printSegmentTable(zkStream);
+            log.info("printing history table");
+            printHistoryTable(zkStream);
+            store.getScaleMetadata(scope, stream, null, executor)
+                    .thenAccept(scales -> scales.forEach(x -> {
+                        System.out.println("scales --> " + x);
+                    })).join();
+            List<Segment> activeSegments = store.getActiveSegments(scope, stream, null, executor).join();
+            activeSegments.stream()
+                    .filter(x -> store.isCold(scope, stream, x.getNumber(), null, executor).join())
+                    .forEach(x -> System.out.println("cold segment:: " + x.getNumber()));
+            System.out.println("configuration = " + store.getConfiguration(scope, stream, null, executor).join());
+            System.out.println("state = " + store.getState(scope, stream, null, executor).join());
+            System.out.println("epoch = " + store.getActiveEpoch(scope, stream, null, true, executor).join());
+            printIndexTable(zkStream);
+        } catch (Exception e) {
+            log.error("error thrown while reading stream metadata {}", e);
         }
 
     }
@@ -133,7 +163,8 @@ public class Main {
                     "7. epoch \n" +
                     "8. Transaction \n" +
                     "9. Checkpoint \n" +
-                    "10. back");
+                    "10. index table \n" +
+                    "11. back");
             Integer option = Integer.parseInt(scanner.nextLine());
 
             switch (option) {
@@ -176,6 +207,9 @@ public class Main {
                     break;
                 case 9:
                     readCheckpoint(zkClient, scanner);
+                    break;
+                case 10:
+                    printIndexTable(zkStream);
                     break;
                 default:
                     return;
@@ -220,6 +254,18 @@ public class Main {
             System.out.println("Number of SegmentRecords: " + records.size());
             System.out.println("Segment Table : ");
             records.forEach(r -> System.out.println(r));
+        }).get();
+    }
+
+    private static void printIndexTable(ZKStream zkStream) throws ExecutionException, InterruptedException {
+        zkStream.getIndexTable().thenAccept(d -> {
+            int offset = d.getData().length - IndexRecord.INDEX_RECORD_SIZE;
+            Optional<IndexRecord> record = IndexRecord.readLatestRecord(d.getData());
+            System.out.println("Index Table : ");
+            while (record.isPresent()) {
+                System.out.println(record.get());
+                record = IndexRecord.fetchPrevious(d.getData(), offset - IndexRecord.INDEX_RECORD_SIZE);
+            }
         }).get();
     }
 

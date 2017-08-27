@@ -1,11 +1,11 @@
 /**
  * Copyright (c) 2017 Dell Inc., or its subsidiaries. All Rights Reserved.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * <p>
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 package io.pravega.test.system;
 
@@ -18,12 +18,16 @@ import mesosphere.marathon.client.utils.MarathonException;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.RetryOneTime;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+
 import java.net.URI;
+
 import static org.apache.curator.framework.imps.CuratorFrameworkState.STARTED;
 import static org.junit.Assert.assertEquals;
 
+@Ignore
 @Slf4j
 @RunWith(SystemTestRunner.class)
 public class ZookeeperTest {
@@ -51,7 +55,7 @@ public class ZookeeperTest {
         Service zk = new ZookeeperService("zookeeper", 0, 0.0, 0.0);
         URI zkUri = zk.getServiceDetails().get(0);
         CuratorFramework curatorFrameworkClient =
-                CuratorFrameworkFactory.newClient(zkUri.getHost()+":"+2181, new RetryOneTime(5000));
+                CuratorFrameworkFactory.newClient(zkUri.getHost() + ":" + 2181, new RetryOneTime(5000));
         curatorFrameworkClient.start();
         log.info("CuratorFramework status {} ", curatorFrameworkClient.getState());
         assertEquals("Connection to zk client ", STARTED, curatorFrameworkClient.getState());

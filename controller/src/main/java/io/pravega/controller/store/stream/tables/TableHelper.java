@@ -1,16 +1,17 @@
 /**
  * Copyright (c) 2017 Dell Inc., or its subsidiaries. All Rights Reserved.
- *
+ * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * <p>
+ * http://www.apache.org/licenses/LICENSE-2.0
  */
 package io.pravega.controller.store.stream.tables;
 
 import io.pravega.controller.store.stream.Segment;
 import io.pravega.controller.store.stream.StoreException;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 
@@ -29,6 +30,7 @@ import java.util.stream.IntStream;
  * All the processing is done locally and this class does not make any network calls.
  * All methods are synchronous and blocking.
  */
+@Slf4j
 public class TableHelper {
     /**
      * Segment Table records are of fixed size.
@@ -160,18 +162,20 @@ public class TableHelper {
         // fetch record corresponding to Ic. If segment present in that history record, fall through history table
         // else perform binary searchIndex
         // Note: if segment is present at Ic, we will fall through in the history table one record at a time
+
         Pair<Integer, Optional<IndexRecord>> search = IndexRecord.search(segment.getStart(), indexTable);
         final Optional<IndexRecord> recordOpt = search.getValue();
-        final int startingOffset = recordOpt.isPresent() ? recordOpt.get().getHistoryOffset() : 0;
+        final int startingOffset = recordOpt.map(IndexRecord::getHistoryOffset).orElse(0);
 
-        final Optional<HistoryRecord> historyRecordOpt = findSegmentCreatedEvent(startingOffset,
+        final Optional<HistoryRecord> segmentCreatedRecord = findSegmentCreatedEvent(startingOffset,
                 segment, historyTable);
 
         // segment information not in history table
-        if (!historyRecordOpt.isPresent()) {
+        if (!segmentCreatedRecord.isPresent()) {
             return new ArrayList<>();
         }
 
+        log.debug("findSegmentCreatedEvent found: {}", segmentCreatedRecord.get());
         final int lower = search.getKey() / IndexRecord.INDEX_RECORD_SIZE;
 
         final int upper = (indexTable.length - IndexRecord.INDEX_RECORD_SIZE) / IndexRecord.INDEX_RECORD_SIZE;
@@ -179,19 +183,21 @@ public class TableHelper {
         // index table may be stale, whereby we may not find segment.start to match an entry in the index table
         final Optional<IndexRecord> indexRecord = IndexRecord.readLatestRecord(indexTable);
         // if nothing is indexed read the first record in history table, hence offset = 0
-        final int lastIndexedRecordOffset = indexRecord.isPresent() ? indexRecord.get().getHistoryOffset() : 0;
+        final int lastIndexedRecordOffset = indexRecord.map(IndexRecord::getHistoryOffset).orElse(0);
 
         final Optional<HistoryRecord> lastIndexedRecord = HistoryRecord.readRecord(historyTable, lastIndexedRecordOffset, false);
+
+        assert lastIndexedRecord.isPresent();
 
         // if segment is present in history table but its offset is greater than last indexed record,
         // we cant do anything on index table, fall through. OR
         // if segment exists at the last indexed record in history table, fall through,
         // no binary search possible on index
-        if (lastIndexedRecord.get().getScaleTime() < historyRecordOpt.get().getScaleTime() ||
+        if (lastIndexedRecord.get().getScaleTime() < segmentCreatedRecord.get().getScaleTime() ||
                 lastIndexedRecord.get().getSegments().contains(segment.getNumber())) {
             // segment was sealed after the last index entry
-            HistoryRecord startPoint = lastIndexedRecord.get().getScaleTime() < historyRecordOpt.get().getScaleTime() ?
-                    historyRecordOpt.get() : lastIndexedRecord.get();
+            HistoryRecord startPoint = lastIndexedRecord.get().getScaleTime() < segmentCreatedRecord.get().getScaleTime() ?
+                    segmentCreatedRecord.get() : lastIndexedRecord.get();
             Optional<HistoryRecord> next = HistoryRecord.fetchNext(startPoint, historyTable, false);
 
             while (next.isPresent() && next.get().getSegments().contains(segment.getNumber())) {
@@ -207,6 +213,8 @@ public class TableHelper {
         } else {
             // segment is definitely sealed and segment sealed event is also present in index table
             // we should be able to find it by doing binary search on Index table
+            log.debug("finding successor candidates between segment created and last indexed record \n" +
+                    "searching between lower = {} upper = {} on index table", lower, upper);
             final Optional<HistoryRecord> record = findSegmentSealedEvent(
                     lower,
                     upper,
@@ -451,9 +459,9 @@ public class TableHelper {
      * @return true if input matches partial state, false otherwise
      */
     public static boolean isRerunOf(final List<Integer> segmentsToSeal,
-                    final List<AbstractMap.SimpleEntry<Double, Double>> newRanges,
-                    final byte[] historyTable,
-                    final byte[] segmentTable) {
+                                    final List<AbstractMap.SimpleEntry<Double, Double>> newRanges,
+                                    final byte[] historyTable,
+                                    final byte[] segmentTable) {
         HistoryRecord latestHistoryRecord = HistoryRecord.readLatestRecord(historyTable, false).get();
 
         int n = newRanges.size();
@@ -536,7 +544,7 @@ public class TableHelper {
             final Optional<HistoryRecord> previous = HistoryRecord.fetchPrevious(current.get(), historyTable);
             result = previous.map(historyRecord ->
                     new ImmutablePair<>(diff(historyRecord.getSegments(), current.get().getSegments()),
-                        diff(current.get().getSegments(), historyRecord.getSegments())))
+                            diff(current.get().getSegments(), historyRecord.getSegments())))
                     .orElseGet(() -> new ImmutablePair<>(Collections.emptyList(), current.get().getSegments()));
         } else {
             result = new ImmutablePair<>(Collections.emptyList(), Collections.emptyList());
@@ -579,6 +587,8 @@ public class TableHelper {
                                                                   final byte[] indexTable,
                                                                   final byte[] historyTable) {
 
+        log.debug("findSegmentSealedEvent called with {}-{} offsets for segment {}\n" +
+                "performing binary search", lower, upper, segmentNumber);
         if (lower > upper || historyTable.length == 0) {
             return Optional.empty();
         }
@@ -591,20 +601,32 @@ public class TableHelper {
                 IndexRecord.fetchPrevious(indexTable, offset) :
                 Optional.empty();
 
-        final int historyTableOffset = indexRecord.isPresent() ? indexRecord.get().getHistoryOffset() : 0;
+        final int historyTableOffset = indexRecord.map(IndexRecord::getHistoryOffset).orElse(0);
         final Optional<HistoryRecord> record = HistoryRecord.readRecord(historyTable, historyTableOffset, false);
 
         // if segment is not present in history record, check if it is present in previous
         // if yes, we have found the segment sealed event
         // else repeat binary searchIndex
         if (!record.get().getSegments().contains(segmentNumber)) {
+            log.debug("findSegmentSealedEvent we found a record that does not have segment number: {}", record.get());
+
+            // why is previous guaranteed to be present?? because current pointer record does not container our segment. And we are here
+            // because we know our current segment was created and sealed within this given range of upper and lower.
             assert previousIndex.isPresent();
+            log.debug("findSegmentSealedEvent previous index = : {}", previousIndex.get());
 
             final Optional<HistoryRecord> previousRecord = HistoryRecord.readRecord(historyTable,
                     previousIndex.get().getHistoryOffset(), false);
+
+            log.debug("findSegmentSealedEvent previous record to the one that does not have desired segment: {}", previousRecord.get());
+
             if (previousRecord.get().getSegments().contains(segmentNumber)) {
+                log.debug("findSegmentSealedEvent search complete: {}", record.get());
+
                 return record; // search complete
             } else { // binary search lower
+                log.debug("findSegmentSealedEvent searching lower as previous does not contain: {}", segmentNumber);
+
                 return findSegmentSealedEvent(lower,
                         (lower + upper) / 2 - 1,
                         segmentNumber,
@@ -612,6 +634,8 @@ public class TableHelper {
                         historyTable);
             }
         } else { // binary search upper
+            log.debug("findSegmentSealedEvent searching upper middle has segment: {}", segmentNumber);
+
             // not sealed in the current location: look in second half
             return findSegmentSealedEvent((lower + upper) / 2 + 1,
                     upper,
