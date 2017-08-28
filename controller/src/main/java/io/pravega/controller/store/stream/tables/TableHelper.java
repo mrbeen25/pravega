@@ -11,6 +11,7 @@ package io.pravega.controller.store.stream.tables;
 
 import io.pravega.controller.store.stream.Segment;
 import io.pravega.controller.store.stream.StoreException;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
 
@@ -29,6 +30,7 @@ import java.util.stream.IntStream;
  * All the processing is done locally and this class does not make any network calls.
  * All methods are synchronous and blocking.
  */
+@Slf4j
 public class TableHelper {
     /**
      * Segment Table records are of fixed size.
@@ -155,6 +157,7 @@ public class TableHelper {
             final Segment segment,
             final byte[] indexTable,
             final byte[] historyTable) {
+        log.info("shivesh: findSegmentSuccessorCandidates 1. segment {}", segment.getNumber());
         // fetch segment start time from segment Is
         // fetch last index Ic
         // fetch record corresponding to Ic. If segment present in that history record, fall through history table
@@ -172,9 +175,11 @@ public class TableHelper {
             return new ArrayList<>();
         }
 
+
         final int lower = search.getKey() / IndexRecord.INDEX_RECORD_SIZE;
 
         final int upper = (indexTable.length - IndexRecord.INDEX_RECORD_SIZE) / IndexRecord.INDEX_RECORD_SIZE;
+        log.info("shivesh: findSegmentSuccessorCandidates 2. found segment created event:{} searching for sealed event: index table from {}-{}", historyRecordOpt.get(), lower, upper);
 
         // index table may be stale, whereby we may not find segment.start to match an entry in the index table
         final Optional<IndexRecord> indexRecord = IndexRecord.readLatestRecord(indexTable);
@@ -183,6 +188,8 @@ public class TableHelper {
 
         final Optional<HistoryRecord> lastIndexedRecord = HistoryRecord.readRecord(historyTable, lastIndexedRecordOffset, false);
 
+        log.info("shivesh: findSegmentSuccessorCandidates 3. last indexed record:{}", lastIndexedRecord.get());
+
         // if segment is present in history table but its offset is greater than last indexed record,
         // we cant do anything on index table, fall through. OR
         // if segment exists at the last indexed record in history table, fall through,
@@ -190,6 +197,8 @@ public class TableHelper {
         if (lastIndexedRecord.get().getScaleTime() < historyRecordOpt.get().getScaleTime() ||
                 lastIndexedRecord.get().getSegments().contains(segment.getNumber())) {
             // segment was sealed after the last index entry
+            log.info("shivesh: findSegmentSuccessorCandidates 4.a segment was sealed after the last index entry, fall through");
+
             HistoryRecord startPoint = lastIndexedRecord.get().getScaleTime() < historyRecordOpt.get().getScaleTime() ?
                     historyRecordOpt.get() : lastIndexedRecord.get();
             Optional<HistoryRecord> next = HistoryRecord.fetchNext(startPoint, historyTable, false);
@@ -200,13 +209,20 @@ public class TableHelper {
             }
 
             if (next.isPresent()) {
+                log.info("shivesh: findSegmentSuccessorCandidates 4.a.a segment was sealed {}", next.get());
+
                 return next.get().getSegments();
             } else { // we have reached end of history table which means segment was never sealed
+                log.info("shivesh: findSegmentSuccessorCandidates 4.a.b we have reached end of history table which means segment was never sealed");
+
                 return new ArrayList<>();
             }
         } else {
             // segment is definitely sealed and segment sealed event is also present in index table
             // we should be able to find it by doing binary search on Index table
+
+            log.info("shivesh: findSegmentSuccessorCandidates 4.b segment was sealed within indexed records. calling findSegmentSealedEvent");
+
             final Optional<HistoryRecord> record = findSegmentSealedEvent(
                     lower,
                     upper,
@@ -237,6 +253,8 @@ public class TableHelper {
             final Segment segment,
             final byte[] indexTable,
             final byte[] historyTable) {
+        log.info("shivesh: findSegmentPredecessorCandidates 1. segment {}", segment.getNumber());
+
         final Optional<IndexRecord> recordOpt = IndexRecord.search(segment.getStart(), indexTable)
                 .getValue();
         final int startingOffset = recordOpt.isPresent() ? recordOpt.get().getHistoryOffset() : 0;
@@ -247,13 +265,19 @@ public class TableHelper {
             return new ArrayList<>();
         }
 
+        log.info("shivesh: findSegmentPredecessorCandidates 2. found segment creation event {}", historyRecordOpt.get());
+
         final HistoryRecord record = historyRecordOpt.get();
 
         final Optional<HistoryRecord> previous = HistoryRecord.fetchPrevious(record, historyTable);
 
         if (!previous.isPresent()) {
+            log.info("shivesh: findSegmentPredecessorCandidates 3.a no predecessors");
+
             return new ArrayList<>();
         } else {
+            log.info("shivesh: findSegmentPredecessorCandidates 3.b found predecessors {}", previous.get());
+
             assert !previous.get().getSegments().contains(segment.getNumber());
             return previous.get().getSegments();
         }
@@ -589,6 +613,8 @@ public class TableHelper {
                                                                   final byte[] indexTable,
                                                                   final byte[] historyTable) {
 
+        log.info("shivesh: findSegmentSealedEvent 1. search in range {} {}", lower, upper);
+
         if (lower > upper || historyTable.length == 0) {
             return Optional.empty();
         }
@@ -597,24 +623,42 @@ public class TableHelper {
 
         final Optional<IndexRecord> indexRecord = IndexRecord.readRecord(indexTable, offset);
 
+        log.info("shivesh: findSegmentSealedEvent 2. reading record at middle offset : {} .. index record =", offset, indexRecord.orElse(null));
+
         final Optional<IndexRecord> previousIndex = indexRecord.isPresent() ?
                 IndexRecord.fetchPrevious(indexTable, offset) :
                 Optional.empty();
 
+        log.info("shivesh: findSegmentSealedEvent 3. previous index to middle index: {} .. index record =", offset, previousIndex.orElse(null));
+
         final int historyTableOffset = indexRecord.isPresent() ? indexRecord.get().getHistoryOffset() : 0;
         final Optional<HistoryRecord> record = HistoryRecord.readRecord(historyTable, historyTableOffset, false);
+
+        log.info("shivesh: findSegmentSealedEvent 4. middle indexed history record =", record.orElse(null));
 
         // if segment is not present in history record, check if it is present in previous
         // if yes, we have found the segment sealed event
         // else repeat binary searchIndex
         if (!record.get().getSegments().contains(segmentNumber)) {
+            log.info("shivesh: findSegmentSealedEvent 5.a.1 segment not in middle record");
+
             assert previousIndex.isPresent();
+
+            log.info("shivesh: findSegmentSealedEvent 5.a.2 previous has to be present because segment was present in lower for this method to be called with lower");
 
             final Optional<HistoryRecord> previousRecord = HistoryRecord.readRecord(historyTable,
                     previousIndex.get().getHistoryOffset(), false);
+
+            log.info("shivesh: findSegmentSealedEvent 5.a.3 previous record {}", previousRecord.orElse(null));
+
             if (previousRecord.get().getSegments().contains(segmentNumber)) {
+
+                log.info("shivesh: findSegmentSealedEvent 5.a.4 found sealing event", record);
+
                 return record; // search complete
             } else { // binary search lower
+                log.info("shivesh: findSegmentSealedEvent 5.a.4 recursive search between lower and middle - 1");
+
                 return findSegmentSealedEvent(lower,
                         (lower + upper) / 2 - 1,
                         segmentNumber,
@@ -623,6 +667,9 @@ public class TableHelper {
             }
         } else { // binary search upper
             // not sealed in the current location: look in second half
+            log.info("shivesh: findSegmentSealedEvent 5.b middle has the segment, recursive search between middle + 1 and upper");
+            // note we can send middle + 1 because middle has the value.. and middle + 1.previous is middle
+
             return findSegmentSealedEvent((lower + upper) / 2 + 1,
                     upper,
                     segmentNumber,
@@ -634,6 +681,7 @@ public class TableHelper {
     private static Optional<HistoryRecord> findSegmentCreatedEvent(final int startingOffset,
                                                                    final Segment segment,
                                                                    final byte[] historyTable) {
+        log.info("shivesh: 1. findSegmentCreatedEvent");
 
         Optional<HistoryRecord> historyRecordOpt = findRecordInHistoryTable(startingOffset,
                 segment.getStart(), historyTable, false);
