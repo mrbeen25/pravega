@@ -135,7 +135,8 @@ public class ConcurrentEventProcessor<R extends ControllerEvent, H extends Reque
         }
 
         if (RetryableException.isRetryable(cause)) {
-            log.info("ConcurrentEventProcessor Processing failed, Retryable Exception {}. Putting the event back.", cause.getClass().getName());
+            cause = ExceptionHelpers.getRealException(e);
+            log.warn("ConcurrentEventProcessor Processing failed, Retryable Exception {}. Putting the event back.", cause);
 
             EventProcessor.Writer<R> writer;
             if (internalWriter != null) {
