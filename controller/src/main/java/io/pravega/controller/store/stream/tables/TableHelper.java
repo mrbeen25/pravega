@@ -175,7 +175,6 @@ public class TableHelper {
             return new ArrayList<>();
         }
 
-
         final int lower = search.getKey() / IndexRecord.INDEX_RECORD_SIZE;
 
         final int upper = (indexTable.length - IndexRecord.INDEX_RECORD_SIZE) / IndexRecord.INDEX_RECORD_SIZE;
